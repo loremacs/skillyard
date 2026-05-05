@@ -10,17 +10,17 @@ Format: `## [version] — YYYY-MM-DD` with sections Added, Changed, Fixed, Remov
 
 ### Added
 
-- `mcp/` — TypeScript MCP server exposing `list_skills` and `get_skill` tools; connects Cursor, Windsurf, and any MCP-compatible agent to the skill library via stdio
+- `mcp/` — TypeScript MCP server over **HTTP (Streamable HTTP)** exposing `list_skills`, `get_skill`, `setup_project`, skill `resources/read` for `skillyard://skills/{name}`, and ZIP downloads at `/skills/<name>/download`; connects Cursor, Windsurf, Claude Code, and other MCP clients via URL-based config
 
 ### Changed
 
-### Fixed
-
-### Removed
+- Documented that `setup_project` returns merge snippets only (no server-side file writes)
+- `SECURITY.md` — scope updated for HTTP MCP and ZIP serving
+- Hardened skill name validation and path containment for `get_skill`, Resources, and ZIP download
+- CI — `npm ci` and `npm run build` for `mcp/` on push/PR
+- Root `TODO.md` — maintainer checklist (GitHub About / topics)
 
 ---
-
-## [0.1.0] — 2026-05-04
 
 ### Added
 

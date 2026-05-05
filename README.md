@@ -6,7 +6,7 @@ A hosted MCP server that delivers reusable agent skills on demand. Any AI coding
 
 ## How it works
 
-Skills are `SKILL.md` files stored in `.agents/skills/`. The SkillYard MCP server exposes them over HTTP. Agents in any IDE (Cursor, Windsurf, Claude Code, Copilot) query the server to find and download skills into their projects.
+Skills are `SKILL.md` files stored in `.agents/skills/`. Bundles may include scripts or assets in any language (for example Python under `skill-creator/`). The SkillYard **server** is TypeScript in `mcp/` and exposes skills over HTTP (Streamable HTTP MCP). Agents in any IDE (Cursor, Windsurf, Claude Code, Copilot) query the server to find and download skills into their projects.
 
 ---
 
@@ -58,7 +58,7 @@ The server injects a usage guide automatically on every connection via the MCP `
 |---|---|
 | `list_skills(query?)` | Search available skills by keyword |
 | `get_skill(name)` | Get skill content, file manifest, and download URL |
-| `setup_project(ide)` | One-time: generates IDE config entry and `AGENTS.md` project marker |
+| `setup_project(ide)` | One-time: **returns** JSON snippets to merge into IDE MCP config and `AGENTS.md` — does not write files on the server |
 
 Skills are also downloadable as ZIPs:
 
@@ -93,4 +93,4 @@ GET http://your-server:3333/skills/<name>/download
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CHANGELOG.md](./CHANGELOG.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CHANGELOG.md](./CHANGELOG.md). Maintainer checklist: [TODO.md](./TODO.md).

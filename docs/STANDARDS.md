@@ -63,3 +63,15 @@ When a standard ships a breaking change or a sourced dependency updates, update 
 **What we use:** Concise dos/don'ts, single source of truth, file-scoped guidance, no duplication.
 
 **On upgrade:** Conventions are community-driven and informal. Review periodically for new patterns; update `AGENTS.md` if a better practice applies.
+
+---
+
+## GitHub language statistics
+
+The repository is **polyglot by design**: the SkillYard **product runtime** is Node.js / TypeScript in `mcp/`. **Skills** under `.agents/skills/` are portable bundles that may include Python, shell, or other languages (whatever authors ship); those are **payloads**, not the MCP server.
+
+**What we do:** `.gitattributes` marks `.agents/skills/**` as `linguist-vendored` so [GitHub Linguist](https://github.com/github/linguist) excludes skill bundles from the language bar. The bar then highlights the **maintained runtime** (`mcp/`), not “Python because one skill ships scripts.” That is not claiming the repo is “Node only” — it is “Node-first for the server; skills may be multi-language.”
+
+**Impact areas:** `.gitattributes`
+
+**On change:** If you add a large non-runtime directory that skews language stats, extend `.gitattributes` using Linguist’s documented overrides.

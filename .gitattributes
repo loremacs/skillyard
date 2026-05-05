@@ -1,0 +1,4 @@
+# GitHub Linguist: skill folders bundle optional scripts (e.g. Python) for agents.
+# They are not the SkillYard runtime — exclude from the repo language bar so the
+# dominant language reflects the MCP server (`mcp/`, TypeScript).
+.agents/skills/** linguist-vendored

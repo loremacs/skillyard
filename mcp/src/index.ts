@@ -23,6 +23,23 @@ interface FileEntry {
   size_bytes: number;
 }
 
+/** Skill folder names only — blocks path separators and traversal. */
+const SKILL_DIRECTORY_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+
+function invalidSkillDirectoryReason(name: string): string | null {
+  if (!name || !SKILL_DIRECTORY_NAME_RE.test(name)) {
+    return "Invalid skill name: use a single directory segment (letters, digits, ., _, -), matching the folder name under the skills root.";
+  }
+  const skillRoot = path.join(SKILLS_DIR, name);
+  const baseResolved = path.resolve(SKILLS_DIR);
+  const skillResolved = path.resolve(skillRoot);
+  const rel = path.relative(baseResolved, skillResolved);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return "Invalid skill path: outside skills directory.";
+  }
+  return null;
+}
+
 function parseFrontmatter(content: string): SkillMeta {
   const match = content.match(/^---\n([\s\S]*?)\n---/);
   if (!match) return { name: "", description: "" };
@@ -133,6 +150,11 @@ RULES:
       inputSchema: { name: z.string().describe("Skill name, e.g. 'skill-creator'") },
     },
     async ({ name }) => {
+      const bad = invalidSkillDirectoryReason(name);
+      if (bad) {
+        return { content: [{ type: "text", text: bad }], isError: true };
+      }
+
       const skillDir = path.join(SKILLS_DIR, name);
       const skillPath = path.join(skillDir, "SKILL.md");
 
@@ -163,7 +185,8 @@ RULES:
     "setup_project",
     {
       title: "Wire Project to SkillYard",
-      description: "One-time project wiring: generates the IDE MCP config entry and AGENTS.md section for this project. Call once per project. Safe to re-run — uses a sentinel to prevent duplicate AGENTS.md entries. Also returns the skills directory structure and download URL pattern.",
+      description:
+        "One-time project wiring: returns JSON with IDE MCP config snippets and an AGENTS.md section to merge — the server does not write files. Call once per project. Safe to re-run — sentinel text prevents duplicate AGENTS.md blocks when applied manually. Also returns skills_dir and download_url_pattern.",
       inputSchema: {
         ide: z.enum(["cursor", "windsurf", "claude-code", "vscode", "all"])
           .describe("The IDE to configure, or 'all' for every supported IDE"),
@@ -250,6 +273,10 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
     { description: "SKILL.md content for a SkillYard skill", mimeType: "text/markdown" },
     async (uri, variables) => {
       const skillName = variables.name as string;
+      const bad = invalidSkillDirectoryReason(skillName);
+      if (bad) {
+        throw new Error(bad);
+      }
       const skillPath = path.join(SKILLS_DIR, skillName, "SKILL.md");
       if (!fs.existsSync(skillPath)) {
         throw new Error(`Skill '${skillName}' not found`);
@@ -293,6 +320,11 @@ app.post("/mcp", async (req: Request, res: Response) => {
 // ── ZIP download endpoint ─────────────────────────────────────────────────────
 app.get("/skills/:name/download", (req: Request, res: Response) => {
   const skillName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+  const bad = invalidSkillDirectoryReason(skillName);
+  if (bad) {
+    res.status(400).json({ error: bad });
+    return;
+  }
   const skillDir = path.join(SKILLS_DIR, skillName);
 
   if (!fs.existsSync(skillDir) || !fs.existsSync(path.join(skillDir, "SKILL.md"))) {
