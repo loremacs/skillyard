@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { z } from "zod";
@@ -92,10 +92,13 @@ RULES:
   );
 
   // ── list_skills ───────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "list_skills",
-    "List available SkillYard skills (name + description only). Pass an optional query to filter by keyword — e.g. 'playwright', 'typescript', 'git'. Only returns metadata; use get_skill to fetch full content.",
-    { query: z.string().optional().describe("Keyword to filter by (matched against name and description, case-insensitive)") },
+    {
+      title: "Browse SkillYard Skills",
+      description: "List available SkillYard skills (name + description only). Pass an optional query to filter by keyword — e.g. 'playwright', 'typescript', 'git'. Only returns metadata; use get_skill to fetch full content.",
+      inputSchema: { query: z.string().optional().describe("Keyword to filter by (matched against name and description, case-insensitive)") },
+    },
     async ({ query }) => {
       const dirs = listSkillDirs();
       let skills = dirs.map((dir) => {
@@ -122,10 +125,13 @@ RULES:
   );
 
   // ── get_skill ─────────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "get_skill",
-    "Get the SKILL.md content for a named skill plus a manifest of all supporting files and a download URL. Use the download URL to fetch the full skill as a ZIP.",
-    { name: z.string().describe("Skill name, e.g. 'skill-creator'") },
+    {
+      title: "Fetch Skill Details",
+      description: "Get the SKILL.md content for a named skill plus a manifest of all supporting files and a download URL. Use the download URL to fetch the full skill as a ZIP.",
+      inputSchema: { name: z.string().describe("Skill name, e.g. 'skill-creator'") },
+    },
     async ({ name }) => {
       const skillDir = path.join(SKILLS_DIR, name);
       const skillPath = path.join(skillDir, "SKILL.md");
@@ -153,14 +159,17 @@ RULES:
   );
 
   // ── setup_project ─────────────────────────────────────────────────────────
-  server.tool(
+  server.registerTool(
     "setup_project",
-    "One-time project wiring: generates the IDE MCP config entry and AGENTS.md section for this project. Call once per project. Safe to re-run — uses a sentinel to prevent duplicate AGENTS.md entries. Also returns the skills directory structure and download URL pattern.",
     {
-      ide: z.enum(["cursor", "windsurf", "claude-code", "vscode", "all"])
-        .describe("The IDE to configure, or 'all' for every supported IDE"),
-      server_url: z.string().optional()
-        .describe("SkillYard server URL — defaults to http://localhost:3333/mcp"),
+      title: "Wire Project to SkillYard",
+      description: "One-time project wiring: generates the IDE MCP config entry and AGENTS.md section for this project. Call once per project. Safe to re-run — uses a sentinel to prevent duplicate AGENTS.md entries. Also returns the skills directory structure and download URL pattern.",
+      inputSchema: {
+        ide: z.enum(["cursor", "windsurf", "claude-code", "vscode", "all"])
+          .describe("The IDE to configure, or 'all' for every supported IDE"),
+        server_url: z.string().optional()
+          .describe("SkillYard server URL — defaults to http://localhost:3333/mcp"),
+      },
     },
     async ({ ide, server_url }) => {
       const url = server_url ?? `http://localhost:${PORT}/mcp`;
@@ -215,6 +224,45 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
       };
 
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ── skills as Resources ───────────────────────────────────────────────────
+  // Expose skills via the MCP Resources primitive (application-controlled read-only data).
+  // Tools remain the primary interface for autonomous agent use; Resources allow clients
+  // that prefer the Resources pattern to consume the same data natively.
+  server.resource(
+    "skill",
+    new ResourceTemplate("skillyard://skills/{name}", {
+      list: async () => ({
+        resources: listSkillDirs().map((dir) => {
+          const content = fs.readFileSync(path.join(SKILLS_DIR, dir, "SKILL.md"), "utf-8");
+          const { name, description } = parseFrontmatter(content);
+          return {
+            uri: `skillyard://skills/${dir}`,
+            name: name || dir,
+            description,
+            mimeType: "text/markdown",
+          };
+        }),
+      }),
+    }),
+    { description: "SKILL.md content for a SkillYard skill", mimeType: "text/markdown" },
+    async (uri, variables) => {
+      const skillName = variables.name as string;
+      const skillPath = path.join(SKILLS_DIR, skillName, "SKILL.md");
+      if (!fs.existsSync(skillPath)) {
+        throw new Error(`Skill '${skillName}' not found`);
+      }
+      return {
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "text/markdown",
+            text: fs.readFileSync(skillPath, "utf-8"),
+          },
+        ],
+      };
     }
   );
 

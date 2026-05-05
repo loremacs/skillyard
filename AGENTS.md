@@ -3,6 +3,9 @@
 ## Be Concise
 State only what cannot be inferred. Verbose guidance is a defect.
 
+## Standards
+External specs and sourced dependencies are tracked in [`docs/STANDARDS.md`](./docs/STANDARDS.md). Check it before modifying anything tied to MCP, the Agent Skills format, or the `skill-creator` baseline.
+
 ## Single Source of Truth
 Maintain one canonical source for each reusable item, including code, config, schemas, rules, skills, and shared documentation.
 

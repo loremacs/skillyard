@@ -78,6 +78,19 @@ GET http://your-server:3333/skills/<name>/download
 
 ---
 
+## Standards
+
+| Standard | Version / Source | Used for |
+|---|---|---|
+| [Model Context Protocol](https://modelcontextprotocol.io/specification/2025-11-25) | `2025-11-25` | MCP server transport, Tools, Resources, `instructions` |
+| [Agent Skills format](https://agentskills.io/specification) | Open standard (agentskills.io) | `SKILL.md` schema, folder layout, progressive disclosure |
+| [anthropics/skills](https://github.com/anthropics/skills) | No release tags — sourced May 2026 | Baseline for `skill-creator` skill |
+| [AGENTS.md best practices](https://agentsmd.io/agents-md-best-practices) | Community standard (agentsmd.io) | `AGENTS.md` conventions |
+
+→ Full upgrade guidance: [docs/STANDARDS.md](./docs/STANDARDS.md)
+
+---
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) and [CHANGELOG.md](./CHANGELOG.md).
