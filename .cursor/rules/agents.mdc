@@ -1,9 +1,0 @@
----
-description: Project-wide agent instructions and skill file guidance
-globs: "**"
-alwaysApply: true
----
-
-Follow `AGENTS.md` for all project-wide agent instructions.
-
-When creating or modifying any agent instruction file in this repository, read `skills/SKILLS.md` first.
