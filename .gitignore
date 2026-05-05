@@ -26,6 +26,6 @@ desktop.ini
 *.swo
 
 # Local agent config (generated, not committed)
-.cursor/mcp.json
+.cursor/
 .github/copilot-instructions.md
 .windsurfrules
