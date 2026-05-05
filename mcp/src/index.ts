@@ -41,20 +41,20 @@ function invalidSkillDirectoryReason(name: string): string | null {
 }
 
 function parseFrontmatter(content: string): SkillMeta {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return { name: "", description: "" };
 
   const block = match[1];
   const nameMatch = block.match(/^name:\s*(.+)$/m);
 
   let description = "";
-  const blockScalar = block.match(/^description:\s*>-?\s*\n([\s\S]*?)(?=\n\S|$)/m);
+  const blockScalar = block.match(/^description:\s*>-?\s*\r?\n([\s\S]*?)(?=\r?\n\S|$)/m);
   const plainString = block.match(/^description:\s*(.+)$/m);
 
   if (blockScalar) {
     // Multi-line block scalar (>- or >)
     description = blockScalar[1]
-      .split("\n")
+      .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean)
       .join(" ");
@@ -195,7 +195,7 @@ RULES:
       },
     },
     async ({ ide, server_url }) => {
-      const url = server_url ?? `http://localhost:${PORT}/mcp`;
+      const url = server_url ?? `${BASE_URL}/mcp`;
 
       const configs: Record<string, { file: string; content: unknown }> = {
         cursor: {
