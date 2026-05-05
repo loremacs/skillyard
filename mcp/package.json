@@ -1,0 +1,27 @@
+{
+  "name": "skillyard-mcp",
+  "version": "0.2.0",
+  "description": "MCP server for SkillYard — serves agent skills on demand",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node --env-file=.env dist/index.js",
+    "stop": "node stop.mjs",
+    "restart": "node restart.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "latest",
+    "archiver": "^7.0.1",
+    "express": "^5.2.1",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

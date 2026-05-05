@@ -1,0 +1,12 @@
+services:
+  skillyard:
+    build:
+      context: ./mcp
+    ports:
+      - "${PORT:-3333}:3333"
+    environment:
+      PORT: "3333"
+      SKILLYARD_DIR: "/skills"
+    volumes:
+      - ${SKILLYARD_DIR:-./.agents/skills}:/skills:ro
+    restart: unless-stopped

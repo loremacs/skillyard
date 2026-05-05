@@ -3,11 +3,6 @@
 
 # Meta-skills require maintainer review
 .agents/skills/skill-creator/ @loremacs
-.agents/skills/create-agents-md/ @loremacs
-.agents/skills/create-skill/ @loremacs
-.agents/skills/create-rule/ @loremacs
-.agents/skills/universal-agent-config/ @loremacs
 
 # Project config
 AGENTS.md @loremacs
-.cursor/rules/ @loremacs

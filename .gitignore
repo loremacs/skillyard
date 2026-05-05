@@ -15,6 +15,12 @@ env/
 node_modules/
 npm-debug.log*
 
+# MCP server build output and runtime files
+mcp/node_modules/
+mcp/dist/
+mcp/mcp.pid
+mcp/.env
+
 # OS
 .DS_Store
 Thumbs.db
