@@ -1,8 +1,5 @@
 # SkillYard — Agent Briefing
 
-This document is self-contained. The agent reading it needs no other files,
-no repo access, and no prior context.
-
 ---
 
 ## The problem
