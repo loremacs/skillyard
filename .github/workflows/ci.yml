@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate skills and scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check for committed cache files
+        run: |
+          if find . -name "*.pyc" -not -path "./.git/*" | grep -q .; then
+            echo "ERROR: .pyc files should not be committed. Add __pycache__/ to .gitignore."
+            find . -name "*.pyc" -not -path "./.git/*"
+            exit 1
+          fi
+          echo "No .pyc files found."
+
+      - name: Validate SKILL.md frontmatter
+        run: |
+          python - <<'EOF'
+          import os, sys, re
+
+          errors = []
+          for root, dirs, files in os.walk(".agents/skills"):
+              dirs[:] = [d for d in dirs if d != "__pycache__"]
+              if "SKILL.md" in files:
+                  path = os.path.join(root, "SKILL.md")
+                  with open(path, encoding="utf-8") as f:
+                      content = f.read()
+                  if not content.startswith("---"):
+                      errors.append(f"{path}: missing YAML frontmatter")
+                      continue
+                  fm_end = content.find("---", 3)
+                  if fm_end == -1:
+                      errors.append(f"{path}: unclosed frontmatter")
+                      continue
+                  fm = content[3:fm_end]
+                  if "name:" not in fm:
+                      errors.append(f"{path}: frontmatter missing 'name'")
+                  if "description:" not in fm:
+                      errors.append(f"{path}: frontmatter missing 'description'")
+
+          if errors:
+              for e in errors:
+                  print(f"ERROR: {e}")
+              sys.exit(1)
+          else:
+              print(f"All SKILL.md files validated.")
+          EOF
+
+      - name: Syntax-check Python scripts
+        run: |
+          find .agents -name "*.py" -not -path "*/__pycache__/*" | while read f; do
+            python -m py_compile "$f" && echo "OK: $f" || exit 1
+          done
