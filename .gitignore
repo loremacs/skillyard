@@ -21,6 +21,11 @@ mcp/dist/
 mcp/mcp.pid
 mcp/.env
 
+# SQLite database and WAL sidecar files
+*.db
+*.db-shm
+*.db-wal
+
 # OS
 .DS_Store
 Thumbs.db

@@ -14,11 +14,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",
     "archiver": "^7.0.1",
+    "better-sqlite3": "^12.9.0",
     "express": "^5.2.1",
+    "yaml": "^2.8.4",
     "zod": "latest"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/node": "latest",
     "tsx": "latest",

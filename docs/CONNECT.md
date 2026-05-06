@@ -92,8 +92,9 @@ File: `.vscode/mcp.json` in your project root
 | Tool | What it does |
 |---|---|
 | `list_skills(query?)` | Lists available skills; filter by keyword |
-| `get_skill(name)` | Returns skill content, file manifest, and download URL |
+| `get_skill(name)` | Returns skill content, `contentHash`, file manifest, and download URL |
 | `setup_project(ide)` | One-time: generates IDE config entry and project marker for `AGENTS.md` |
+| `submit_feedback(...)` | Reports a bug, improvement, documentation gap, or feature request |
 
 The server also injects a usage guide automatically into every agent session via the MCP `instructions` field — agents know how to use SkillYard as soon as they connect, no extra tool call needed.
 
