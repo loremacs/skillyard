@@ -18,6 +18,9 @@ Format: `## [version] — YYYY-MM-DD` with sections Added, Changed, Fixed, Remov
 
 ### Changed
 
+- **`setup_project`** response includes **`mcp_documentation`** URLs (MCP spec, Cursor, VS Code Copilot MCP, CONNECT)
+- **`docs/CONNECT.md` / `README.md`**: universal **paste-JSON-first** flow for any MCP client; official **MCP + Cursor + VS Code** reference links; **`install-ide-mcp.mjs`** optional with explicit “why not curl alone”; examples use **Windsurf** where a client example is needed; Windsurf/Cursor UI hints are **per `--ide`**, not Cursor-only
+- **`install-ide-mcp.mjs`**: post-install text explains config-only vs running server, optional **`GET /health`** probe ( **`--skip-probe`** )
 - MCP **`instructions`**, **`get_skill`** (install + **`zip_extract_antipattern`**), and **`setup_project`** JSON (**`zip_extract`**, clearer **`steps`**, **`agents_md`** wording): correct ZIP extract root (`.agents/skills/`), anti–double-folder guidance, **`setup_project` before hand-written AGENTS**, and “if **`list_skills`** works, MCP is already wired” so agents do not mis-order steps; **`docs/CONNECT.md`**, **`get_skillyard_test_guide`**, **`README.md`** aligned
 - Documented that `setup_project` returns merge snippets only (no server-side file writes)
 - `SECURITY.md` — scope updated for HTTP MCP and ZIP serving

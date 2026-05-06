@@ -1,10 +1,11 @@
-import { readFileSync, existsSync, unlinkSync } from "fs";
+import { readFileSync, existsSync, unlinkSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const PID_FILE = resolve(__dir, "mcp.pid");
+const PORT = process.env.PORT ?? "3333";
 
 // 1. Stop — kill by PID file first, then fall back to killing by port
 
@@ -39,7 +40,6 @@ try {
 }
 
 // 3. Start (detached so this script can exit)
-const PORT = process.env.PORT ?? "3333";
 console.log("\nStarting server...");
 const child = spawn("node", ["--env-file=.env", "dist/index.js"], {
   cwd: __dir,
@@ -47,5 +47,11 @@ const child = spawn("node", ["--env-file=.env", "dist/index.js"], {
   stdio: "ignore",
 });
 child.unref();
+try {
+  // record PID for stop.mjs (best-effort; port clearing remains fallback)
+  writeFileSync(PID_FILE, `${child.pid}\n`, "utf-8");
+} catch {
+  // ignore
+}
 console.log(`SkillYard MCP running at http://localhost:${PORT}/mcp`);
 console.log(`Download: http://localhost:${PORT}/skills/<name>/download`);

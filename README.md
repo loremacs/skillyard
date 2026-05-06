@@ -30,22 +30,35 @@ docker compose up -d
 
 ---
 
-**Users** — connect your IDE:
+**Users** — paste into your MCP config, set `your-server` to wherever the SkillYard **HTTP server** runs (use `localhost` only if server and IDE are on the same machine), merge with existing servers, **fully restart** the IDE.
 
-**Option A — merge helper (Node required):** from a clone, `cd mcp && npm run install-ide-mcp -- --ide cursor` (or `windsurf`, `claude-code`, `vscode`). Optional `--url https://your-host:3333/mcp`. **vscode** writes `./.vscode/mcp.json` in the current directory; others update the IDE config under your home directory.
+**Cursor, Windsurf, Claude Code** use the **same JSON** — only the config file differs:
 
-**Option B — same script without cloning** (still need Node):
+- **Cursor**: `%USERPROFILE%\.cursor\mcp.json` (Windows) or `~/.cursor/mcp.json`
+- **Windsurf**: `%USERPROFILE%\.codeium\windsurf\mcp_config.json` or `~/.codeium/windsurf/mcp_config.json`
+- **Claude Code**: `%USERPROFILE%\.claude\mcp.json`, `~/.claude/mcp.json`, or project `.mcp.json`
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/loremacs/skillyard/main/mcp/scripts/install-ide-mcp.mjs -o install-ide-mcp.mjs \
-  && node install-ide-mcp.mjs --ide cursor
+```json
+{
+  "mcpServers": {
+    "skillyard": { "url": "http://your-server:3333/mcp" }
+  }
+}
 ```
 
-Then **restart the IDE fully**, verify `list_skills`, and have your agent call **`setup_project(ide)`** (and use **`zip_extract`** when installing skills — destination **`.agents/skills/`** only).
+**VS Code / Copilot** uses workspace `.vscode/mcp.json` with a **different shape**:
 
-**Option C — manual JSON:** add `skillyard` to your IDE’s MCP file as in [docs/CONNECT.md](./docs/CONNECT.md).
+```json
+{
+  "servers": {
+    "skillyard": { "type": "http", "url": "http://your-server:3333/mcp" }
+  }
+}
+```
 
-→ Full guide: [docs/CONNECT.md](./docs/CONNECT.md)
+Optional: `cd mcp && npm run install-ide-mcp -- --ide <cursor|windsurf|claude-code|vscode> --url http://your-server:3333/mcp`
+
+→ [docs/CONNECT.md](./docs/CONNECT.md) paths, MCP links, Claude-only notes
 
 ---
 

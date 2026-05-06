@@ -1,39 +1,61 @@
 # Connecting to SkillYard
 
-Add one JSON entry to your IDE's MCP config, restart, and you're connected.
+Add one JSON entry to your **MCP client** config (Windsurf, Cursor, VS Code, Claude Code, …), **fully restart** that client, then use SkillYard tools (`list_skills`, `setup_project`, …). Common pattern: **operator** runs the SkillYard **server** on one machine; **other machines** point their IDE at `http://<host>:3333/mcp` (or HTTPS) — replace the host with wherever the server listens.
+
+---
+
+## Protocol & client references
+
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** — overview.
+- **[MCP specification](https://modelcontextprotocol.io/specification/latest)** — including HTTP-based servers.
+- **[MCP clients](https://modelcontextprotocol.io/clients)** — which apps support MCP.
+- **[Cursor — Model Context Protocol](https://docs.cursor.com/context/model-context-protocol)** — Cursor client configuration.
+- **[VS Code — Add and manage MCP servers](https://code.visualstudio.com/docs/copilot/chat/mcp-servers)** — workspace / user `mcp.json`.
+
+Windsurf: use the **`mcp_config.json`** paths in the [Windsurf](#windsurf) section; Command Palette **“Windsurf: Configure MCP Servers”** opens the file when available.
 
 ---
 
 ## Prerequisites
 
-A SkillYard server must be running and reachable. Get the URL from whoever operates your SkillYard instance.
+A SkillYard server must be **running and reachable from the IDE’s machine** (not only from the server host). Get the URL from whoever operates your instance.
 
-For local development the default is `http://localhost:3333/mcp`.
+For local development on the **same** machine, the default is `http://localhost:3333/mcp`.
 
 ---
 
-## One-liner: merge SkillYard into your IDE config (Node)
+## Recommended: paste JSON (universal — no script, no curl)
 
-Raw `curl` cannot safely merge JSON; this repo ships a small **Node** script that **adds or updates** the `skillyard` entry and leaves other servers untouched.
+1. Replace `http://your-server:3333/mcp` in the snippets below with your real URL (e.g. LAN IP if the server runs on another PC).
+2. Open the config file for **your** IDE (paths in each section).
+3. **Merge** the `skillyard` entry into `mcpServers` (or `servers` for VS Code) — do **not** replace the whole file if you already have other MCP servers.
 
-**After cloning** (from `mcp/`):
+---
+
+## Optional: Node merge script (`install-ide-mcp.mjs`)
+
+Same merge as hand-pasting; use for automation or when you prefer not to edit JSON.
+
+**Why people use `curl …mjs` + `node`:** plain `curl` cannot merge into existing JSON files. The script is a tiny helper; if you dislike downloading it, **paste JSON** from the sections above instead.
+
+**After clone** (from `mcp/`):
 
 ```bash
-npm run install-ide-mcp -- --ide cursor
-# or: windsurf | claude-code | vscode
-# optional: --url http://your-server:3333/mcp
+npm run install-ide-mcp -- --ide windsurf
+# or: cursor | claude-code | vscode
+# optional: --url http://<skillYard-host>:3333/mcp
 ```
 
-**Without cloning** (needs Node on `PATH`):
+**Without clone** (needs Node on `PATH`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/loremacs/skillyard/main/mcp/scripts/install-ide-mcp.mjs -o install-ide-mcp.mjs \
-  && node install-ide-mcp.mjs --ide cursor
+  && node install-ide-mcp.mjs --ide windsurf --url http://<skillYard-host>:3333/mcp
 ```
 
-- **`vscode`** writes `./.vscode/mcp.json` in the **current working directory** (project-scoped). Other IDEs update files under your **home** directory (see per-IDE sections below).
-- The script does **not** start the SkillYard server. For local dev, from `mcp/`: `npm install && npm run build && npm run restart` (or Docker — [SETUP.md](./SETUP.md)).
-- **Restart the IDE fully** after running the script, then use MCP tools (e.g. **`setup_project`**) — that is the project “setup” step; the script only wires the URL.
+- **`vscode`** writes `./.vscode/mcp.json` in the **current working directory**. Other IDEs update the **user** config paths below.
+- Does **not** start the SkillYard server. Runs **`GET /health`** on the MCP origin unless **`--skip-probe`**, and warns if unreachable.
+- **[SETUP.md](./SETUP.md)** — run the server locally or via Docker.
 
 ---
 
@@ -53,6 +75,8 @@ File: `~/.cursor/mcp.json` (macOS/Linux) or `%USERPROFILE%\.cursor\mcp.json` (Wi
 
 If the file already exists, merge the `"skillyard"` key into the existing `"mcpServers"` object — do not replace the file.
 
+**Where it shows in Cursor:** servers defined in `mcp.json` are **custom HTTP MCP** — they are **not** listed under **MCP Marketplace**. After a **full quit and restart**, open **Settings → Features → Model Context Protocol** to see `skillyard`, and **Output → MCP Logs** if the connection fails. The server URL must be reachable (e.g. local SkillYard on port 3333).
+
 ---
 
 ## Windsurf
@@ -68,6 +92,8 @@ File: `~/.codeium/windsurf/mcp_config.json` (macOS/Linux) or `%USERPROFILE%\.cod
   }
 }
 ```
+
+**After restart:** tools from `skillyard` appear in **Cascade** when the URL is reachable. If the server runs on another PC, use that host in `url`, not `localhost`, unless you use remote port forwarding.
 
 ---
 
@@ -127,10 +153,10 @@ Skill ZIPs include a top-level folder (e.g. `skill-creator/`). Extract into **`.
 
 Create the directory first if needed: PowerShell `New-Item -ItemType Directory -Force .agents/skills` · bash `mkdir -p .agents/skills`.
 
-### Test runs and feedback (e.g. Windsurf → Cursor)
+### Test runs and feedback (e.g. tester in Windsurf, triage in another IDE)
 
 - Call **`get_skillyard_test_guide`** once — markdown on full E2E checklist, smoke script (REST-only), ZIP install path, **`test_session_id`** (reuse per run; **`list_feedback`** + session filters for current vs archived rows), and **title prefixes** (`[e2e-windsurf]`, `[test-run]`) for **`submit_feedback`**.
-- After a run, the tester agent calls **`submit_feedback`** (same **`test_session_id`** for every update in one run); a maintainer in another IDE calls **`list_feedback`** with the same **MCP server URL** so both hit the **same SQLite file** (feedback is not sent over the network to Cursor by magic — it is shared **only** if both clients point at the same SkillYard host). Use **`list_feedback(test_session_id)`** with default **`include_archived_session_rows: false`** to read the **current** capstone; set **`include_archived_session_rows: true`** for full session history.
+- After a run, the tester agent calls **`submit_feedback`** (same **`test_session_id`** for every update in one run); a maintainer in **another** MCP client uses **`list_feedback`** with the **same SkillYard server URL** so both hit the **same SQLite file** (nothing syncs unless both point at the **same** SkillYard host). Use **`list_feedback(test_session_id)`** with default **`include_archived_session_rows: false`** for the **current** capstone; set **`include_archived_session_rows: true`** for full session history.
 - For a human handoff, paste **`feedback_id`** into chat or a GitHub Issue.
 
 ---

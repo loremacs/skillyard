@@ -78,10 +78,10 @@ function createServer(storage: StorageAdapter): McpServer {
     {
       instructions: `SkillYard serves reusable agent skills on demand.
 
-PREREQ — MCP tools only work if this IDE already has SkillYard in its MCP config and the server is reachable. If list_skills() succeeds, wiring is done: do not tell the user to "add MCP next" as a blocking step. Use setup_project JSON for this project's AGENTS.md merge and as a handoff template for other machines.
+PREREQ — If you can call any SkillYard tool (e.g. list_skills / get_skill / setup_project) in this chat, then MCP is already configured for this client. In that case: do NOT tell the user to add MCP JSON or restart the IDE — continue with project wiring and skill install. Only talk about MCP config/restart when tools are missing or failing.
 
 WORKFLOW — follow this order:
-0. WIRE PROJECT — Call setup_project(ide) for canonical IDE JSON + AGENTS.md sentinel block. Do not invent a separate SkillYard paragraph; merge what setup_project returns. If the user has no MCP yet, they must merge mcp_configs and restart the IDE before any tool calls work.
+0. WIRE PROJECT — Call setup_project(ide) for canonical merge snippets + AGENTS.md sentinel block (use exact text). If MCP is NOT configured yet (tools unavailable), use docs/CONNECT or setup_project.mcp_configs, then fully restart this client.
 1. DISCOVER — list_skills() or list_skills(query:"..."). Use folderName for get_skill.
 2. FETCH — get_skill(name) with that folderName. Read downloadUrl, install_skills_zip_root, zip_extract_antipattern.
 3. INSTALL — Ensure directory exists: PowerShell: New-Item -ItemType Directory -Force .agents/skills   bash: mkdir -p .agents/skills
@@ -315,7 +315,7 @@ RULES:
     {
       title: "Wire Project to SkillYard",
       description:
-        "Returns JSON: IDE MCP merge snippets, canonical AGENTS.md block (use this text — do not paraphrase), zip_extract rules, and ordered steps. Server does not write files. Call early: if list_skills already works, treat mcp_configs as optional reference for other machines; still merge agents_md if sentinel missing.",
+        "Returns JSON: IDE MCP merge snippets, canonical AGENTS.md block (use this text — do not paraphrase), zip_extract rules, mcp_documentation (MCP + IDE links), and ordered steps. Server does not write files. Call early: if list_skills already works, treat mcp_configs as optional reference for other machines; still merge agents_md if sentinel missing.",
       inputSchema: {
         ide: z.enum(["cursor", "windsurf", "claude-code", "vscode", "all"])
           .describe("The IDE to configure, or 'all' for every supported IDE"),
@@ -377,12 +377,21 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
           instruction: "Append agents_md.section to AGENTS.md only if the sentinel is not already present — use exact section text, do not substitute shorter prose",
         },
         steps: [
-          "If list_skills fails / MCP unavailable: merge mcp_configs for this IDE, restart IDE fully, then verify list_skills().",
-          "If list_skills already works: IDE MCP is configured — skip re-telling the user to add MCP as a blocking step; mcp_configs remain useful for teammates or other IDEs.",
+          "If you can call SkillYard tools in this chat, MCP is already wired for this client — skip MCP config/restart steps.",
+          "If tools are missing or failing: paste MCP JSON from SkillYard docs/CONNECT.md (or merge mcp_configs), then fully restart this client and verify list_skills().",
           "Merge agents_md.section into this project's AGENTS.md when the sentinel is absent (exact text from this response).",
           `Create skills directory if needed: PowerShell New-Item -ItemType Directory -Force ${skillsDir.replace(/\/$/, "")}  |  bash mkdir -p ${skillsDir.replace(/\/$/, "")}`,
           "Install skills: get_skill → downloadUrl; extract per zip_extract (destination = skills root only).",
         ],
+        mcp_documentation: {
+          skillyard_CONNECT:
+            "https://github.com/loremacs/skillyard/blob/main/docs/CONNECT.md",
+          mcp: "https://modelcontextprotocol.io/",
+          mcp_spec: "https://modelcontextprotocol.io/specification/latest",
+          mcp_clients: "https://modelcontextprotocol.io/clients",
+          cursor_mcp: "https://docs.cursor.com/context/model-context-protocol",
+          vscode_mcp: "https://code.visualstudio.com/docs/copilot/chat/mcp-servers",
+        },
       };
 
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };

@@ -73,7 +73,6 @@ CREATE INDEX IF NOT EXISTS idx_feedback_category    ON feedback(category);
 CREATE INDEX IF NOT EXISTS idx_feedback_severity    ON feedback(severity);
 CREATE INDEX IF NOT EXISTS idx_feedback_llm_model   ON feedback(llm_model);
 CREATE INDEX IF NOT EXISTS idx_feedback_ide_name    ON feedback(ide_name);
-CREATE INDEX IF NOT EXISTS idx_feedback_session     ON feedback(test_session_id, report_state);
 `;
 
 export class SQLiteAdapter implements StorageAdapter {
