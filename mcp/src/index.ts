@@ -7,10 +7,12 @@ import * as path from "path";
 import { fileURLToPath } from "url";
 import type { Request, Response } from "express";
 import archiver from "archiver";
+import crypto from "crypto";
 import { createStorageAdapter } from "./storage/factory.js";
 import { syncSkillsFromDisk } from "./skills/repository.js";
-import { isValidFolderName } from "./storage/validation.js";
-import type { StorageAdapter } from "./storage/adapter.js";
+import { isValidFolderName, isValidTestSessionId } from "./storage/validation.js";
+import type { FeedbackListFilter, StorageAdapter } from "./storage/adapter.js";
+import { buildSkillyardTestGuide } from "./guides/skillyard-test-guide.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILLS_DIR = process.env.SKILLYARD_DIR ?? path.resolve(__dirname, "../../.agents/skills");
@@ -20,6 +22,39 @@ const BASE_URL = (process.env.BASE_URL ?? `http://localhost:${PORT}`).replace(/\
 interface FileEntry {
   path: string;
   size_bytes: number;
+}
+
+/** Optional MCP field: trim; empty → undefined; invalid shape rejected by Zod before handler. */
+const optionalTestSessionIdField = z.preprocess(
+  (val) => {
+    if (val === undefined || val === null) return undefined;
+    if (typeof val !== "string") return val;
+    const t = val.trim();
+    return t === "" ? undefined : t;
+  },
+  z
+    .string()
+    .max(120)
+    .refine((s) => isValidTestSessionId(s), { message: "invalid test_session_id" })
+    .optional()
+);
+
+function invalidSkillDirectoryReason(name: string): string | null {
+  if (!name || !isValidFolderName(name)) {
+    return "Invalid skill name: use a single directory segment (letters, digits, ., _, -), max 81 chars, matching the folder name under the skills root.";
+  }
+  const skillRoot = path.join(SKILLS_DIR, name);
+  const baseResolved = path.resolve(SKILLS_DIR);
+  const skillResolved = path.resolve(skillRoot);
+  const rel = path.relative(baseResolved, skillResolved);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return "Invalid skill path: outside skills directory.";
+  }
+  return null;
+}
+
+function sha256(text: string): string {
+  return crypto.createHash("sha256").update(text, "utf8").digest("hex");
 }
 
 function walkDir(dir: string, base: string): FileEntry[] {
@@ -37,26 +72,29 @@ function walkDir(dir: string, base: string): FileEntry[] {
   return entries;
 }
 
-const adapter: StorageAdapter = createStorageAdapter();
-
-function createServer(): McpServer {
+function createServer(storage: StorageAdapter): McpServer {
   const server = new McpServer(
-    { name: "skillyard", version: "0.3.0" },
+    { name: "skillyard", version: "0.2.0" },
     {
       instructions: `SkillYard serves reusable agent skills on demand.
 
-WORKFLOW — follow this order for any skill-related task:
-1. DISCOVER — Call list_skills() or list_skills(query:"keyword") to find skills. Returns folderName + description.
-2. FETCH — Call get_skill(name) to get the full content, contentHash, manifest, and download URL.
-3. INSTALL — Download the ZIP from the returned download_url and extract into .agents/skills/:
-   PowerShell: Invoke-WebRequest <download_url> -OutFile skill.zip; Expand-Archive skill.zip -DestinationPath .agents/skills/
-   bash/zsh:   curl -L <download_url> -o skill.zip && unzip skill.zip -d .agents/skills/
+PREREQ — MCP tools only work if this IDE already has SkillYard in its MCP config and the server is reachable. If list_skills() succeeds, wiring is done: do not tell the user to "add MCP next" as a blocking step. Use setup_project JSON for this project's AGENTS.md merge and as a handoff template for other machines.
+
+WORKFLOW — follow this order:
+0. WIRE PROJECT — Call setup_project(ide) for canonical IDE JSON + AGENTS.md sentinel block. Do not invent a separate SkillYard paragraph; merge what setup_project returns. If the user has no MCP yet, they must merge mcp_configs and restart the IDE before any tool calls work.
+1. DISCOVER — list_skills() or list_skills(query:"..."). Use folderName for get_skill.
+2. FETCH — get_skill(name) with that folderName. Read downloadUrl, install_skills_zip_root, zip_extract_antipattern.
+3. INSTALL — Ensure directory exists: PowerShell: New-Item -ItemType Directory -Force .agents/skills   bash: mkdir -p .agents/skills
+   Download ZIP from downloadUrl, extract with destination = skills root ONLY (.agents/skills/):
+   PowerShell: Invoke-WebRequest <downloadUrl> -OutFile skill.zip; Expand-Archive skill.zip -DestinationPath .agents/skills
+   bash/zsh:   curl -L <downloadUrl> -o skill.zip && unzip -o skill.zip -d .agents/skills
+   WRONG (double folder): Expand-Archive ... -DestinationPath .agents/skills/<folderName>  or  unzip ... -d .agents/skills/<folderName>  when the ZIP already contains that folder — yields .agents/skills/<folder>/<folder>/SKILL.md
+4. FEEDBACK — submit_feedback with title prefix [e2e-...] or [test-run]; reuse test_session_id per run; list_feedback(test_session_id) for current capstone. get_skillyard_test_guide for full checklist.
 
 RULES:
-- Skills always install to .agents/skills/<skill-name>/ — preserve all subdirectories
-- Never modify SKILL.md frontmatter name or description fields
-- If this project has not been wired to SkillYard yet, call setup_project(ide) once to generate the IDE config and a project marker
-- Use submit_feedback to report bugs, improvements, or missing skills`,
+- Pass folderName to get_skill, not only the display name from frontmatter
+- Final paths are .agents/skills/<folderName>/... — preserve all subdirectories inside the bundle
+- Never modify SKILL.md frontmatter name or description fields`,
     }
   );
 
@@ -65,16 +103,28 @@ RULES:
     "list_skills",
     {
       title: "Browse SkillYard Skills",
-      description: "List available SkillYard skills (name + description only). Pass an optional query to filter by keyword — e.g. 'playwright', 'typescript', 'git'. Only returns metadata; use get_skill to fetch full content.",
-      inputSchema: { query: z.string().optional().describe("Keyword to filter by (matched against name and description, case-insensitive)") },
+      description:
+        "List skills from the index. Optional query filters via FTS5 (name, description, body). Each row includes folderName (pass this to get_skill), name (display label), description, status, downloadUrl.",
+      inputSchema: {
+        query: z.string().optional().describe("Search string; tokenized for FTS (e.g. playwright, gpt-4o, node.js)"),
+      },
     },
     async ({ query }) => {
-      const skills = await adapter.searchSkills(query);
+      const rows = await storage.searchSkills(query?.trim() || undefined);
+      const skills = rows.map((r) => ({
+        folderName: r.folderName,
+        name: r.name,
+        description: r.description,
+        status: r.status,
+        downloadUrl: r.downloadUrl,
+      }));
+
       if (skills.length === 0) {
         return {
           content: [{ type: "text", text: query ? `No skills found matching '${query}'.` : "No skills available." }],
         };
       }
+
       return { content: [{ type: "text", text: JSON.stringify(skills, null, 2) }] };
     }
   );
@@ -84,42 +134,178 @@ RULES:
     "get_skill",
     {
       title: "Fetch Skill Details",
-      description: "Get the SKILL.md content for a named skill plus a manifest of all supporting files and a download URL. Use the download URL to fetch the full skill as a ZIP.",
-      inputSchema: { name: z.string().describe("Skill name, e.g. 'skill-creator'") },
+      description:
+        "Get full SKILL.md content and bundle file manifest. name must be the folderName from list_skills. Response includes downloadUrl, install_skills_zip_root, install_note, zip_extract_antipattern (read before extracting ZIP).",
+      inputSchema: { name: z.string().describe("folderName from list_skills, e.g. 'skill-creator'") },
     },
     async ({ name }) => {
-      if (!isValidFolderName(name)) {
-        return {
-          content: [{ type: "text", text: "Invalid skill name: use a single directory segment (letters, digits, ., _, -), max 80 chars." }],
-          isError: true,
-        };
+      const bad = invalidSkillDirectoryReason(name);
+      if (bad) {
+        return { content: [{ type: "text", text: bad }], isError: true };
       }
 
-      const skill = await adapter.getSkill(name);
-      if (!skill) {
+      const skillDir = path.join(SKILLS_DIR, name);
+      const skillPath = path.join(skillDir, "SKILL.md");
+
+      const row = await storage.getSkill(name);
+      if (!row && !fs.existsSync(skillPath)) {
         return {
           content: [{ type: "text", text: `Skill '${name}' not found. Use list_skills to see available skills.` }],
           isError: true,
         };
       }
 
-      const skillDir = path.join(SKILLS_DIR, name);
       const allFiles = fs.existsSync(skillDir) ? walkDir(skillDir, "") : [];
       const supportingFiles = allFiles.filter((f) => f.path !== "SKILL.md");
 
+      const content = row?.content ?? fs.readFileSync(skillPath, "utf-8");
+      const downloadUrl = row?.downloadUrl ?? `${BASE_URL}/skills/${name}/download`;
+      const contentHash = row?.contentHash ?? sha256(content);
+      const folderName = row?.folderName ?? name;
+      const displayName = row?.name ?? name;
+      const description = row?.description ?? "";
+
+      const skillsZipRoot = ".agents/skills/";
       const response = {
-        name: skill.name,
-        folderName: skill.folderName,
-        description: skill.description,
-        contentHash: skill.contentHash,
-        install_path: `.agents/skills/${name}/`,
-        download_url: skill.downloadUrl,
-        content: skill.content,
-        supporting_files: supportingFiles,
-        install_note: `Download all files at once: GET ${BASE_URL}/skills/${name}/download — extract into .agents/skills/`,
+        folderName,
+        name: displayName,
+        description,
+        contentHash,
+        downloadUrl,
+        content,
+        files: supportingFiles,
+        install_path: `${skillsZipRoot}${folderName}/`,
+        install_skills_zip_root: skillsZipRoot,
+        install_note: `ZIP contains a top-level "${folderName}/" folder. Extract with destination = skills root only (${skillsZipRoot}) so SKILL.md ends up at ${skillsZipRoot}${folderName}/SKILL.md.`,
+        zip_extract_antipattern: `Do NOT use Expand-Archive -DestinationPath ${skillsZipRoot}${folderName} or unzip -d ${skillsZipRoot}${folderName} when the archive already has a "${folderName}/" root — that nests to ${skillsZipRoot}${folderName}/${folderName}/SKILL.md.`,
       };
 
       return { content: [{ type: "text", text: JSON.stringify(response, null, 2) }] };
+    }
+  );
+
+  // ── submit_feedback ───────────────────────────────────────────────────────
+  server.registerTool(
+    "submit_feedback",
+    {
+      title: "Submit SkillYard Feedback",
+      description:
+        "Record bug, improvement, documentation, or feature_request. Server sets skill_content_hash from current indexed skill when skill_name is valid.",
+      inputSchema: {
+        skill_name: z.string().max(80).optional().describe(
+          "Folder name of the skill (same as list_skills folderName). Omit for general SkillYard feedback."
+        ),
+        category: z.enum(["bug", "improvement", "documentation", "feature_request"]).describe(
+          "bug = fails or wrong output; improvement = works but could be better; documentation = unclear guidance; feature_request = new capability"
+        ),
+        severity: z.enum(["low", "medium", "high", "critical"]).describe(
+          "low = minor; medium = partially blocks; high = blocks task; critical = data loss or corruption"
+        ),
+        title: z.string().min(5).max(120).describe("One-line summary."),
+        description: z.string().min(10).max(8000).describe("What you tried, what happened, what you expected (longer test reports ok)."),
+        llm_model: z.string().max(100).optional().describe('Model id, e.g. "claude-sonnet-4-5"'),
+        ide_name: z.string().max(100).optional().describe('IDE or CLI, e.g. "Cursor 0.48"'),
+        os: z.string().max(100).optional().describe('OS, e.g. "Windows 11"'),
+        context: z.string().max(4000).optional().describe("Extra context: workspace path, host OS, URLs, timings (stored as environment)"),
+        error_logs: z.string().max(2000).optional().describe("Errors or stack traces"),
+        test_session_id: optionalTestSessionIdField.describe(
+          "One id per E2E run; reuse on every submit_feedback in that run. Prior row for same id becomes archived; newest stays report_state latest."
+        ),
+      },
+    },
+    async (args) => {
+      let skillName: string | null = args.skill_name?.trim() || null;
+      if (skillName && !isValidFolderName(skillName)) {
+        skillName = null;
+      }
+      const skillContentHash =
+        skillName != null ? (await storage.getSkill(skillName))?.contentHash ?? null : null;
+      const testSessionId = args.test_session_id ?? null;
+
+      const id = await storage.insertFeedback({
+        skillName,
+        skillContentHash,
+        category: args.category,
+        severity: args.severity,
+        title: args.title,
+        description: args.description,
+        llmModel: args.llm_model ?? null,
+        ideName: args.ide_name ?? null,
+        os: args.os ?? null,
+        environment: args.context ?? null,
+        errorLogs: args.error_logs ?? null,
+        testSessionId,
+      });
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              { feedback_id: id, skill_name: skillName, skill_content_hash: skillContentHash, test_session_id: testSessionId },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  // ── list_feedback (maintainers / triage) ───────────────────────────────────
+  server.registerTool(
+    "list_feedback",
+    {
+      title: "List Submitted Feedback",
+      description:
+        "Returns recent feedback rows from this server’s SQLite (newest first). Filter with title_starts_with e.g. [e2e-windsurf] or [test-run]. With test_session_id, default is only the current capstone (report_state latest); set include_archived_session_rows true for full session history. Same MCP URL as testers = same data.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().default(30).describe("Max rows after filter"),
+        title_starts_with: z.string().max(120).optional().describe("Only titles starting with this string (e.g. [test-run])"),
+        skill_name: z.string().max(80).optional().describe("Only feedback for this skill folderName"),
+        test_session_id: optionalTestSessionIdField.describe("Filter to one E2E run"),
+        include_archived_session_rows: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("With test_session_id: false = only latest capstone for that session; true = all rows (archived + latest), newest first"),
+      },
+    },
+    async ({ limit, title_starts_with, skill_name, test_session_id, include_archived_session_rows }) => {
+      const lim = limit ?? 30;
+      const filter: FeedbackListFilter = {};
+      const sk = skill_name?.trim();
+      if (sk) filter.skillName = sk;
+      if (test_session_id) {
+        filter.testSessionId = test_session_id;
+        if (!include_archived_session_rows) filter.reportState = "latest";
+      }
+      const rows = await storage.listFeedback(Object.keys(filter).length ? filter : undefined);
+      let out = rows;
+      if (title_starts_with?.trim()) {
+        const p = title_starts_with.trim();
+        out = out.filter((r) => (r.title ?? "").startsWith(p));
+      }
+      out = out.slice(0, lim);
+      return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+    }
+  );
+
+  // ── get_skillyard_test_guide ───────────────────────────────────────────────
+  server.registerTool(
+    "get_skillyard_test_guide",
+    {
+      title: "SkillYard Test & Feedback Guide",
+      description:
+        "Read-only: how to run smoke checks, E2E skill install, submit_feedback title conventions, and how list_feedback shares data across IDEs on the same server.",
+      inputSchema: {},
+    },
+    async () => {
+      const text = buildSkillyardTestGuide({
+        baseUrl: BASE_URL,
+        mcpUrl: `${BASE_URL}/mcp`,
+      });
+      return { content: [{ type: "text", text }] };
     }
   );
 
@@ -129,7 +315,7 @@ RULES:
     {
       title: "Wire Project to SkillYard",
       description:
-        "One-time project wiring: returns JSON with IDE MCP config snippets and an AGENTS.md section to merge — the server does not write files. Call once per project. Safe to re-run — sentinel text prevents duplicate AGENTS.md blocks when applied manually. Also returns skills_dir and download_url_pattern.",
+        "Returns JSON: IDE MCP merge snippets, canonical AGENTS.md block (use this text — do not paraphrase), zip_extract rules, and ordered steps. Server does not write files. Call early: if list_skills already works, treat mcp_configs as optional reference for other machines; still merge agents_md if sentinel missing.",
       inputSchema: {
         ide: z.enum(["cursor", "windsurf", "claude-code", "vscode", "all"])
           .describe("The IDE to configure, or 'all' for every supported IDE"),
@@ -166,9 +352,18 @@ RULES:
 Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to discover and install skills into .agents/skills/. The MCP server provides full usage instructions on connection.
 <!-- skillyard:end -->`;
 
+      const skillsDir = ".agents/skills/";
+      const baseNoMcp = url.replace(/\/mcp\/?$/, "");
       const result = {
-        skills_dir: ".agents/skills/",
-        download_url_pattern: `${url.replace("/mcp", "")}/skills/<skill-name>/download`,
+        skills_dir: skillsDir,
+        download_url_pattern: `${baseNoMcp}/skills/<skill-name>/download`,
+        zip_extract: {
+          skills_root: skillsDir,
+          rule: "Unzip/Expand-Archive destination must be the skills root (skills_dir), never skills_dir + folderName when the ZIP already contains that folder.",
+          powershell_example: `Invoke-WebRequest "<downloadUrl>" -OutFile skill.zip; Expand-Archive skill.zip -DestinationPath ${skillsDir.replace(/\/$/, "")}`,
+          bash_example: `curl -L "<downloadUrl>" -o skill.zip && unzip -o skill.zip -d ${skillsDir.replace(/\/$/, "")}`,
+          antipattern: `Wrong: -DestinationPath ${skillsDir}<folderName> or unzip -d ${skillsDir}<folderName> for a ZIP whose root is <folderName>/ — creates double nesting.`,
+        },
         mcp_configs: Object.fromEntries(
           selected.map(([name, cfg]) => [name, {
             file: (cfg as { file: string; content: unknown }).file,
@@ -179,75 +374,18 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
         agents_md: {
           sentinel: "<!-- skillyard:start -->",
           section: agentsMdSection,
-          instruction: "Append to AGENTS.md only if the sentinel is not already present",
+          instruction: "Append agents_md.section to AGENTS.md only if the sentinel is not already present — use exact section text, do not substitute shorter prose",
         },
         steps: [
-          "1. Merge mcp_configs entries into the appropriate IDE config files",
-          "2. Append agents_md.section to this project's AGENTS.md if the sentinel is absent",
-          "3. Restart the IDE to activate the MCP connection",
-          "4. Verify with list_skills()",
+          "If list_skills fails / MCP unavailable: merge mcp_configs for this IDE, restart IDE fully, then verify list_skills().",
+          "If list_skills already works: IDE MCP is configured — skip re-telling the user to add MCP as a blocking step; mcp_configs remain useful for teammates or other IDEs.",
+          "Merge agents_md.section into this project's AGENTS.md when the sentinel is absent (exact text from this response).",
+          `Create skills directory if needed: PowerShell New-Item -ItemType Directory -Force ${skillsDir.replace(/\/$/, "")}  |  bash mkdir -p ${skillsDir.replace(/\/$/, "")}`,
+          "Install skills: get_skill → downloadUrl; extract per zip_extract (destination = skills root only).",
         ],
       };
 
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-
-  // ── submit_feedback ───────────────────────────────────────────────────────
-  server.registerTool(
-    "submit_feedback",
-    {
-      title: "Submit Feedback",
-      description: "Report a bug, improvement, documentation gap, or feature request. The server auto-links the current skill version — no hash required.",
-      inputSchema: {
-        skill_name: z.string().max(80).optional().describe(
-          "Folder name of the skill this feedback is about. Omit for general SkillYard feedback."
-        ),
-        category: z.enum(["bug", "improvement", "documentation", "feature_request"]).describe(
-          "bug = skill fails or produces wrong output. improvement = works but could be better. documentation = guidance unclear or missing. feature_request = new skill or capability needed."
-        ),
-        severity: z.enum(["low", "medium", "high", "critical"]).describe(
-          "low = minor. medium = partially blocks workflow. high = fully blocks task. critical = data loss or corruption."
-        ),
-        title: z.string().min(5).max(120).describe("One-line summary."),
-        description: z.string().min(10).max(2000).describe("What you tried, what happened, and what you expected."),
-        llm_model: z.string().max(100).optional().describe(
-          'Model name and version, e.g. "claude-sonnet-4-5" or "gpt-4o-2025-01".'
-        ),
-        ide_name: z.string().max(100).optional().describe(
-          'IDE or CLI name and version, e.g. "Windsurf 1.4", "Cursor 0.48", "Claude Code 1.0".'
-        ),
-        os: z.string().max(100).optional().describe(
-          'Operating system, e.g. "Windows 11", "macOS 15.3", "Ubuntu 24.04".'
-        ),
-        context: z.string().max(1000).optional().describe(
-          "Any additional context not covered by the structured fields above."
-        ),
-        error_logs: z.string().max(2000).optional().describe(
-          "Relevant error messages or stack traces."
-        ),
-      },
-    },
-    async ({ skill_name, category, severity, title, description, llm_model, ide_name, os, context, error_logs }) => {
-      const skillHash = skill_name && isValidFolderName(skill_name)
-        ? (await adapter.getSkill(skill_name))?.contentHash ?? null
-        : null;
-      const id = await adapter.insertFeedback({
-        skillName:        skill_name        ?? null,
-        skillContentHash: skillHash,
-        category,
-        severity,
-        title,
-        description,
-        llmModel:    llm_model   ?? null,
-        ideName:     ide_name    ?? null,
-        os:          os          ?? null,
-        environment: context     ?? null,
-        errorLogs:   error_logs  ?? null,
-      });
-      return {
-        content: [{ type: "text", text: JSON.stringify({ feedback_id: id, message: "Feedback recorded. Thank you." }) }],
-      };
     }
   );
 
@@ -258,23 +396,39 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
   server.resource(
     "skill",
     new ResourceTemplate("skillyard://skills/{name}", {
-      list: async () => ({
-        resources: (await adapter.listSkills()).map((s) => ({
-          uri: `skillyard://skills/${s.folderName}`,
-          name: s.name,
-          description: s.description,
-          mimeType: "text/markdown",
-        })),
-      }),
+      list: async () => {
+        const rows = await storage.listSkills();
+        return {
+          resources: rows.map((r) => ({
+            uri: `skillyard://skills/${r.folderName}`,
+            name: r.name,
+            description: r.description,
+            mimeType: "text/markdown",
+          })),
+        };
+      },
     }),
     { description: "SKILL.md content for a SkillYard skill", mimeType: "text/markdown" },
     async (uri, variables) => {
       const skillName = variables.name as string;
-      if (!isValidFolderName(skillName)) throw new Error("Invalid skill name");
-      const skill = await adapter.getSkill(skillName);
-      if (!skill) throw new Error(`Skill '${skillName}' not found`);
+      const bad = invalidSkillDirectoryReason(skillName);
+      if (bad) {
+        throw new Error(bad);
+      }
+      const skillPath = path.join(SKILLS_DIR, skillName, "SKILL.md");
+      const row = await storage.getSkill(skillName);
+      const text = row?.content ?? (fs.existsSync(skillPath) ? fs.readFileSync(skillPath, "utf-8") : null);
+      if (text == null) {
+        throw new Error(`Skill '${skillName}' not found`);
+      }
       return {
-        contents: [{ uri: uri.href, mimeType: "text/markdown", text: skill.content }],
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "text/markdown",
+            text,
+          },
+        ],
       };
     }
   );
@@ -284,9 +438,119 @@ Agent skills are managed via SkillYard (${url}). Use the skillyard MCP tools to 
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 const app = createMcpExpressApp();
+const storage = createStorageAdapter();
+
+// ── REST (health, listing, smoke) — registered before MCP + ZIP ─────────────
+app.get("/health", async (_req: Request, res: Response) => {
+  try {
+    const skillCount = await storage.getSkillCount();
+    res.json({ status: "ok", skillCount, uptime: process.uptime() });
+  } catch (e) {
+    res.status(500).json({ status: "error", message: String(e) });
+  }
+});
+
+app.get("/skills", async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === "string" ? req.query.q : undefined;
+    const results = await storage.searchSkills(q?.trim() || undefined);
+    res.json(results);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.get("/skills/:name", async (req: Request, res: Response) => {
+  const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+  const bad = invalidSkillDirectoryReason(raw);
+  if (bad) {
+    res.status(400).json({ error: bad });
+    return;
+  }
+  try {
+    const skill = await storage.getSkill(raw);
+    if (!skill) {
+      res.status(404).json({ error: "Skill not found" });
+      return;
+    }
+    res.json({
+      folderName: skill.folderName,
+      name: skill.name,
+      description: skill.description,
+      status: skill.status,
+      version: skill.version,
+      contentHash: skill.contentHash,
+      downloadUrl: skill.downloadUrl,
+      updatedAt: skill.updatedAt,
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.post("/feedback/test", async (req: Request, res: Response) => {
+  if (process.env.SKILLYARD_DEV_MODE !== "true") {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const body = req.body as Record<string, unknown>;
+  const category = body.category as string | undefined;
+  const severity = body.severity as string | undefined;
+  const title = body.title as string | undefined;
+  const description = body.description as string | undefined;
+  if (!category || !severity || !title || !description) {
+    res.status(400).json({ error: "category, severity, title, description required" });
+    return;
+  }
+  const cats = ["bug", "improvement", "documentation", "feature_request"];
+  const sevs = ["low", "medium", "high", "critical"];
+  if (!cats.includes(category) || !sevs.includes(severity)) {
+    res.status(400).json({ error: "invalid category or severity" });
+    return;
+  }
+  let skillName: string | null = (body.skill_name as string | undefined)?.trim() || null;
+  if (skillName && !isValidFolderName(skillName)) {
+    skillName = null;
+  }
+  const rawSid = body.test_session_id;
+  let testSessionId: string | null = null;
+  if (rawSid !== undefined && rawSid !== null && rawSid !== "") {
+    if (typeof rawSid !== "string") {
+      res.status(400).json({ error: "test_session_id must be a string" });
+      return;
+    }
+    const t = rawSid.trim();
+    if (!isValidTestSessionId(t)) {
+      res.status(400).json({ error: "invalid test_session_id" });
+      return;
+    }
+    testSessionId = t;
+  }
+  const skillContentHash =
+    skillName != null ? (await storage.getSkill(skillName))?.contentHash ?? null : null;
+  try {
+    const id = await storage.insertFeedback({
+      skillName,
+      skillContentHash,
+      category: category as "bug" | "improvement" | "documentation" | "feature_request",
+      severity: severity as "low" | "medium" | "high" | "critical",
+      title,
+      description,
+      llmModel: (body.llm_model as string) ?? null,
+      ideName: (body.ide_name as string) ?? null,
+      os: (body.os as string) ?? null,
+      environment: (body.context as string) ?? null,
+      errorLogs: (body.error_logs as string) ?? null,
+      testSessionId,
+    });
+    res.json({ feedback_id: id, test_session_id: testSessionId });
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
 
 app.post("/mcp", async (req: Request, res: Response) => {
-  const server = createServer();
+  const server = createServer(storage);
   try {
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
@@ -303,21 +567,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
   }
 });
 
-// ── REST endpoints ────────────────────────────────────────────────────────────
-app.get("/health", async (_req: Request, res: Response) => {
-  const skillCount = await adapter.getSkillCount();
-  res.json({ status: "ok", skillCount, uptime: process.uptime() });
-});
-
-app.get("/skills", async (req: Request, res: Response) => {
-  const query = typeof req.query.q === "string" ? req.query.q : undefined;
-  res.json(await adapter.searchSkills(query));
-});
-
+// ── ZIP download endpoint ─────────────────────────────────────────────────────
 app.get("/skills/:name/download", (req: Request, res: Response) => {
   const skillName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
-  if (!isValidFolderName(skillName)) {
-    res.status(400).json({ error: "Invalid skill name" });
+  const bad = invalidSkillDirectoryReason(skillName);
+  if (bad) {
+    res.status(400).json({ error: bad });
     return;
   }
   const skillDir = path.join(SKILLS_DIR, skillName);
@@ -337,68 +592,36 @@ app.get("/skills/:name/download", (req: Request, res: Response) => {
   archive.finalize();
 });
 
-app.get("/skills/:name", async (req: Request, res: Response) => {
-  const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
-  if (!isValidFolderName(name)) {
-    res.status(400).json({ error: "Invalid skill name" });
-    return;
-  }
-  const skill = await adapter.getSkill(name);
-  if (!skill) {
-    res.status(404).json({ error: "Skill not found" });
-    return;
-  }
-  res.json({
-    folderName:  skill.folderName,
-    name:        skill.name,
-    description: skill.description,
-    status:      skill.status,
-    version:     skill.version,
-    contentHash: skill.contentHash,
-    downloadUrl: skill.downloadUrl,
-    updatedAt:   skill.updatedAt,
-  });
-});
-
-app.post("/feedback/test", async (req: Request, res: Response) => {
-  if (process.env.SKILLYARD_DEV_MODE !== "true") {
-    res.status(404).json({ error: "Not found" });
-    return;
-  }
-  const { category, severity, title, description } = req.body;
-  if (!category || !severity || !title || !description) {
-    res.status(400).json({ error: "category, severity, title, description required" });
-    return;
-  }
-  const id = await adapter.insertFeedback({
-    skillName:        req.body.skill_name         ?? null,
-    skillContentHash: req.body.skill_content_hash ?? null,
-    category, severity, title, description,
-    llmModel:    req.body.llm_model   ?? null,
-    ideName:     req.body.ide_name    ?? null,
-    os:          req.body.os          ?? null,
-    environment: req.body.context     ?? null,
-    errorLogs:   req.body.error_logs  ?? null,
-  });
-  res.json({ feedback_id: id });
-});
-
 const PID_FILE = path.resolve(__dirname, "../mcp.pid");
 
-(async () => {
-  await adapter.initialize();
-  const syncResult = await syncSkillsFromDisk(adapter, SKILLS_DIR, BASE_URL);
-  console.log(`Skills synced: ${syncResult.synced} upserted, ${syncResult.skipped} unchanged, ${syncResult.deleted} removed`);
-  if (syncResult.warnings.length > 0) syncResult.warnings.forEach((w) => console.warn(`WARN: ${w}`));
+async function bootstrap(): Promise<void> {
+  await storage.initialize();
+  const sync = await syncSkillsFromDisk(storage, SKILLS_DIR, BASE_URL, {});
+  console.log(
+    `Storage: synced=${sync.synced} skipped=${sync.skipped} deleted=${sync.deleted} warnings=${sync.warnings.length}`
+  );
+  if (sync.warnings.length) {
+    for (const w of sync.warnings) console.warn(`  ${w}`);
+  }
+
   app.listen(PORT, () => {
     fs.writeFileSync(PID_FILE, String(process.pid));
     console.log(`SkillYard MCP server running at http://localhost:${PORT}/mcp`);
-    console.log(`Tools: list_skills, get_skill, setup_project, submit_feedback`);
+    console.log(`Tools: list_skills, get_skill, setup_project, submit_feedback, list_feedback, get_skillyard_test_guide`);
+    console.log(`REST: GET /health, GET /skills, GET /skills/:name, GET /skills/:name/download`);
     console.log(`PID: ${process.pid} (saved to mcp.pid)`);
   });
-})();
+}
+
+bootstrap().catch((err) => {
+  console.error("Startup failed:", err);
+  process.exit(1);
+});
 
 function shutdown() {
+  void storage.close().catch(() => {
+    /* ignore */
+  });
   if (fs.existsSync(PID_FILE)) fs.unlinkSync(PID_FILE);
   process.exit(0);
 }

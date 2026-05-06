@@ -9,7 +9,8 @@
     "dev": "tsx src/index.ts",
     "start": "node --env-file=.env dist/index.js",
     "stop": "node stop.mjs",
-    "restart": "node restart.mjs"
+    "restart": "node restart.mjs",
+    "install-ide-mcp": "node scripts/install-ide-mcp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "latest",

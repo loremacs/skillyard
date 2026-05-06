@@ -5,7 +5,7 @@
     "moduleResolution": "Node16",
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["node", "better-sqlite3"],
+    "types": ["node"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true

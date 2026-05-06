@@ -20,11 +20,8 @@ mcp/node_modules/
 mcp/dist/
 mcp/mcp.pid
 mcp/.env
-
-# SQLite database and WAL sidecar files
-*.db
-*.db-shm
-*.db-wal
+mcp/skillyard.db
+mcp/skillyard.db-*
 
 # OS
 .DS_Store

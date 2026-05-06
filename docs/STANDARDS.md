@@ -22,6 +22,24 @@ When a standard ships a breaking change or a sourced dependency updates, update 
 
 ---
 
+## SQLite index & feedback (`mcp/`)
+
+The MCP server keeps **`SKILLYARD_DB_PATH`** (default `./skillyard.db` under `mcp/`): **skills** rows are a disposable cache synced from disk; **feedback** rows are intended to be durable.
+
+### Backing up feedback
+
+Before replacing or deleting the DB file, back it up (includes feedback):
+
+```bash
+sqlite3 skillyard.db ".backup skillyard.backup.db"
+```
+
+The **skills** table can be rebuilt from `SKILLYARD_DIR` on the next startup; **feedback** should not be dropped casually.
+
+**Impact areas:** `mcp/src/storage/sqlite.ts`, `docs/SETUP.md`, `mcp/.env.example`
+
+---
+
 ## Agent Skills Format
 
 | Field | Value |
@@ -32,9 +50,9 @@ When a standard ships a breaking change or a sourced dependency updates, update 
 
 **What we use:** `SKILL.md` frontmatter schema (`name`, `description` required), folder layout (`.agents/skills/<name>/`), and the progressive disclosure model (discovery → activation → execution).
 
-**Impact areas:** All `.agents/skills/` content, `mcp/src/skills/repository.ts` (`parseFrontmatter`, `syncSkillsFromDisk`), `mcp/src/storage/validation.ts` (`SKILL_FOLDER_RE`), server `instructions` install steps
+**Impact areas:** All `.agents/skills/` content, `mcp/src/skills/repository.ts` (YAML frontmatter for sync), server `instructions` install steps
 
-**On upgrade:** If new required or recommended frontmatter fields are added to the spec, update `parseFrontmatter` in `repository.ts` and the `SKILL.md` template. If the folder convention changes, update the server's `SKILLS_DIR` logic and install instructions.
+**On upgrade:** If new required or recommended frontmatter fields are added to the spec, update sync parsing in `repository.ts` and the `SKILL.md` template. If the folder convention changes, update `SKILLS_DIR` / validation in `mcp/src/storage/validation.ts` and install instructions.
 
 ---
 
@@ -63,23 +81,6 @@ When a standard ships a breaking change or a sourced dependency updates, update 
 **What we use:** Concise dos/don'ts, single source of truth, file-scoped guidance, no duplication.
 
 **On upgrade:** Conventions are community-driven and informal. Review periodically for new patterns; update `AGENTS.md` if a better practice applies.
-
----
-
-## Storage Layer
-
-| Field | Value |
-|---|---|
-| Library | `better-sqlite3` (synchronous SQLite bindings for Node.js) |
-| Extension | FTS5 (full-text search, bundled with SQLite) |
-| Schema file | assembled inline in `mcp/src/storage/sqlite.ts` as `SCHEMA_SQL` |
-| DB path | `SKILLYARD_DB_PATH` env var, default `./skillyard.db` (relative to cwd) |
-
-**Impact areas:** `mcp/src/storage/`, `mcp/src/skills/repository.ts`, `mcp/.env.example`
-
-**Backup guidance:** The SQLite database is a cache — all source-of-truth data lives in `.agents/skills/` SKILL.md files. The DB is fully reconstructable by deleting it and restarting the server (which re-runs `syncSkillsFromDisk`). For the `feedback` table, back up `skillyard.db` before wiping if feedback data must be preserved.
-
-**On upgrade:** If `better-sqlite3` ships a new major version, check for Node.js N-API compatibility and rebuilt prebuilt binary availability. Schema migrations are tracked in the `schema_migrations` table — add a new migration version rather than altering `SCHEMA_SQL` directly.
 
 ---
 

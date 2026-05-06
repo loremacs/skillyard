@@ -33,6 +33,15 @@ export interface FeedbackEntry {
   environment?: string | null;
   errorLogs?: string | null;
   createdAt?: string;
+  /** Groups one E2E run; newest row in session is `reportState === "latest"`. */
+  testSessionId?: string | null;
+  reportState?: "latest" | "archived" | null;
+}
+
+export interface FeedbackListFilter {
+  skillName?: string;
+  testSessionId?: string;
+  reportState?: "latest" | "archived";
 }
 
 export interface StorageAdapter {
@@ -48,5 +57,5 @@ export interface StorageAdapter {
   getSkillCount(): Promise<number>;
 
   insertFeedback(entry: FeedbackEntry): Promise<number>;
-  listFeedback(skillName?: string): Promise<FeedbackEntry[]>;
+  listFeedback(filter?: FeedbackListFilter): Promise<FeedbackEntry[]>;
 }

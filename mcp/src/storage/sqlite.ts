@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 import { toFtsQuery } from "./fts.js";
-import type { StorageAdapter, Skill, SkillSearchResult, FeedbackEntry } from "./adapter.js";
+import type { StorageAdapter, Skill, SkillSearchResult, FeedbackEntry, FeedbackListFilter } from "./adapter.js";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS feedback (
   os                  TEXT,
   environment         TEXT,
   error_logs          TEXT,
+  test_session_id     TEXT,
+  report_state        TEXT NOT NULL DEFAULT 'latest'
+                      CHECK(report_state IN ('latest', 'archived')),
   created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -70,6 +73,7 @@ CREATE INDEX IF NOT EXISTS idx_feedback_category    ON feedback(category);
 CREATE INDEX IF NOT EXISTS idx_feedback_severity    ON feedback(severity);
 CREATE INDEX IF NOT EXISTS idx_feedback_llm_model   ON feedback(llm_model);
 CREATE INDEX IF NOT EXISTS idx_feedback_ide_name    ON feedback(ide_name);
+CREATE INDEX IF NOT EXISTS idx_feedback_session     ON feedback(test_session_id, report_state);
 `;
 
 export class SQLiteAdapter implements StorageAdapter {
@@ -84,6 +88,31 @@ export class SQLiteAdapter implements StorageAdapter {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA_SQL);
+    this.migrateFeedbackSessionColumns();
+  }
+
+  /** Adds test_session_id + report_state on DBs created before v2. */
+  private migrateFeedbackSessionColumns(): void {
+    const row = this.db.prepare("SELECT MAX(version) AS m FROM schema_migrations").get() as { m: number | null };
+    const maxV = row?.m ?? 0;
+    if (maxV >= 2) return;
+
+    const cols = this.db.prepare("PRAGMA table_info(feedback)").all() as { name: string }[];
+    const names = new Set(cols.map((c) => c.name));
+    if (!names.has("test_session_id")) {
+      this.db.exec("ALTER TABLE feedback ADD COLUMN test_session_id TEXT;");
+    }
+    if (!names.has("report_state")) {
+      this.db.exec("ALTER TABLE feedback ADD COLUMN report_state TEXT DEFAULT 'latest';");
+    }
+    this.db.exec(`
+      UPDATE feedback SET report_state = 'latest'
+      WHERE report_state IS NULL OR report_state = '';
+    `);
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(test_session_id, report_state);
+    `);
+    this.db.prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (2)").run();
   }
 
   async close(): Promise<void> {
@@ -155,34 +184,70 @@ export class SQLiteAdapter implements StorageAdapter {
   }
 
   async insertFeedback(entry: FeedbackEntry): Promise<number> {
-    return this.db.prepare(`
+    const trx = this.db.transaction(() => {
+      const sid = entry.testSessionId?.trim() || null;
+      if (sid) {
+        this.db
+          .prepare(
+            "UPDATE feedback SET report_state = 'archived' WHERE test_session_id = ? AND report_state = 'latest'"
+          )
+          .run(sid);
+      }
+      return this.db
+        .prepare(
+          `
       INSERT INTO feedback
         (skill_name, skill_content_hash, category, severity, title, description,
-         llm_model, ide_name, os, environment, error_logs)
+         llm_model, ide_name, os, environment, error_logs, test_session_id, report_state)
       VALUES
         (@skillName, @skillContentHash, @category, @severity, @title, @description,
-         @llmModel, @ideName, @os, @environment, @errorLogs)
-    `).run({
-      skillName:        entry.skillName        ?? null,
-      skillContentHash: entry.skillContentHash ?? null,
-      category:         entry.category,
-      severity:         entry.severity,
-      title:            entry.title,
-      description:      entry.description,
-      llmModel:         entry.llmModel         ?? null,
-      ideName:          entry.ideName          ?? null,
-      os:               entry.os               ?? null,
-      environment:      entry.environment      ?? null,
-      errorLogs:        entry.errorLogs        ?? null,
-    }).lastInsertRowid as number;
+         @llmModel, @ideName, @os, @environment, @errorLogs, @testSessionId, 'latest')
+    `
+        )
+        .run({
+          skillName:        entry.skillName        ?? null,
+          skillContentHash: entry.skillContentHash ?? null,
+          category:         entry.category,
+          severity:         entry.severity,
+          title:            entry.title,
+          description:      entry.description,
+          llmModel:         entry.llmModel         ?? null,
+          ideName:          entry.ideName          ?? null,
+          os:               entry.os               ?? null,
+          environment:      entry.environment      ?? null,
+          errorLogs:        entry.errorLogs        ?? null,
+          testSessionId:    sid,
+        }).lastInsertRowid as number;
+    });
+    return trx();
   }
 
-  async listFeedback(skillName?: string): Promise<FeedbackEntry[]> {
-    const rows = (skillName
-      ? this.db.prepare("SELECT * FROM feedback WHERE skill_name = ? ORDER BY created_at DESC").all(skillName)
-      : this.db.prepare("SELECT * FROM feedback ORDER BY created_at DESC").all()
-    ) as Record<string, unknown>[];
-    return rows.map((r) => ({
+  async listFeedback(filter?: FeedbackListFilter): Promise<FeedbackEntry[]> {
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (filter?.skillName) {
+      conditions.push("skill_name = ?");
+      params.push(filter.skillName);
+    }
+    if (filter?.testSessionId) {
+      conditions.push("test_session_id = ?");
+      params.push(filter.testSessionId);
+    }
+    if (filter?.reportState) {
+      conditions.push("report_state = ?");
+      params.push(filter.reportState);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    const sql = `SELECT * FROM feedback ${where} ORDER BY created_at DESC`;
+    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToFeedback(r));
+  }
+
+  private rowToFeedback(r: Record<string, unknown>): FeedbackEntry {
+    const rs = r.report_state as string | null | undefined;
+    const reportState: FeedbackEntry["reportState"] =
+      rs === "archived" ? "archived" : rs === "latest" ? "latest" : "latest";
+    return {
       id:               r.id as number,
       skillName:        r.skill_name as string | null,
       skillContentHash: r.skill_content_hash as string | null,
@@ -196,7 +261,9 @@ export class SQLiteAdapter implements StorageAdapter {
       environment:      r.environment as string | null,
       errorLogs:        r.error_logs as string | null,
       createdAt:        r.created_at as string,
-    }));
+      testSessionId:    (r.test_session_id as string | null) ?? null,
+      reportState:      reportState,
+    };
   }
 
   private toSkill(r: Record<string, unknown>): Skill {

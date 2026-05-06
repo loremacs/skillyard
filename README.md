@@ -32,19 +32,18 @@ docker compose up -d
 
 **Users** — connect your IDE:
 
-Add one entry to your IDE's MCP config:
+**Option A — merge helper (Node required):** from a clone, `cd mcp && npm run install-ide-mcp -- --ide cursor` (or `windsurf`, `claude-code`, `vscode`). Optional `--url https://your-host:3333/mcp`. **vscode** writes `./.vscode/mcp.json` in the current directory; others update the IDE config under your home directory.
 
-```json
-{
-  "mcpServers": {
-    "skillyard": {
-      "url": "http://your-server:3333/mcp"
-    }
-  }
-}
+**Option B — same script without cloning** (still need Node):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loremacs/skillyard/main/mcp/scripts/install-ide-mcp.mjs -o install-ide-mcp.mjs \
+  && node install-ide-mcp.mjs --ide cursor
 ```
 
-Restart your IDE, then ask your agent to call `setup_project`.
+Then **restart the IDE fully**, verify `list_skills`, and have your agent call **`setup_project(ide)`** (and use **`zip_extract`** when installing skills — destination **`.agents/skills/`** only).
+
+**Option C — manual JSON:** add `skillyard` to your IDE’s MCP file as in [docs/CONNECT.md](./docs/CONNECT.md).
 
 → Full guide: [docs/CONNECT.md](./docs/CONNECT.md)
 
@@ -56,15 +55,14 @@ The server injects a usage guide automatically on every connection via the MCP `
 
 | Tool | What it does |
 |---|---|
-| `list_skills(query?)` | Search available skills by keyword |
-| `get_skill(name)` | Get skill content, file manifest, and download URL |
-| `setup_project(ide)` | One-time: **returns** JSON snippets to merge into IDE MCP config and `AGENTS.md` — does not write files on the server |
+| `list_skills(query?)` | Indexed list + optional FTS `query`; returns **folderName**, display **name**, **description**, **status**, **downloadUrl** |
+| `get_skill(name)` | **folderName** from `list_skills`; returns **content**, **contentHash**, **files**, **downloadUrl** |
+| `setup_project(ide)` | **Returns** JSON snippets for IDE MCP config and `AGENTS.md` — server does not write files |
+| `submit_feedback(...)` | Bug / improvement / docs / feature request; optional **`test_session_id`** per E2E run (reused across submits; older row archived); links **skill_content_hash** when **skill_name** matches |
+| `list_feedback(...)` | Triage feedback; **`test_session_id`** + **`include_archived_session_rows`** for current capstone vs full session — same MCP URL = same DB as tester |
+| `get_skillyard_test_guide()` | How to run smoke / E2E tests and file **submit_feedback** so another IDE can **list_feedback** |
 
-Skills are also downloadable as ZIPs:
-
-```
-GET http://your-server:3333/skills/<name>/download
-```
+HTTP: `GET /health`, `GET /skills`, `GET /skills/:name`, `GET /skills/:name/download` — see [docs/CONNECT.md](./docs/CONNECT.md).
 
 ---
 

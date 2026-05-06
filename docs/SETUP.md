@@ -29,6 +29,17 @@ To use a custom skills directory:
 SKILLYARD_DIR=/path/to/skills npm run restart
 ```
 
+### SQLite index
+
+The server maintains a local **SQLite** database (default `./skillyard.db` under `mcp/`) for skill metadata, **FTS5** search, and optional feedback rows. It is populated from disk on startup (`STORAGE_BACKEND=sqlite`, default).
+
+| Variable | Purpose |
+|---|---|
+| `STORAGE_BACKEND` | `sqlite` (default only backend today) |
+| `SKILLYARD_DB_PATH` | Path to the database file (default `./skillyard.db`) |
+
+Docker Compose mounts a named volume at `/data` and sets `SKILLYARD_DB_PATH=/data/skillyard.db` so the index survives container restarts.
+
 To use a different port:
 
 ```bash
@@ -109,4 +120,4 @@ skillyard.yourcompany.com {
 curl -s http://localhost:3333/skills/skill-creator/download -o test.zip
 ```
 
-A valid ZIP file means the server is running and serving skills correctly.
+A valid ZIP file means the server is running and serving skills correctly. To install into a project tree, extract with **destination = skills root** only, e.g. `unzip -o test.zip -d /path/to/project/.agents/skills` — not `-d .../.agents/skills/skill-creator` when the archive already contains a `skill-creator/` top-level folder (see [docs/CONNECT.md — Skill ZIP extract](./CONNECT.md#skill-zip-extract-avoid-double-folder)).
